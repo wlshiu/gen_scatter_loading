@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="test_gen_scatter_loading" />
+		<Option pch_mode="2" />
+		<Option compiler="gcc" />
+		<Build>
+			<Target title="Debug">
+				<Option output="bin/Debug/test_gen_scatter_loading" prefix_auto="1" extension_auto="1" />
+				<Option object_output="obj/Debug/" />
+				<Option type="1" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-std=c99" />
+					<Add option="-g" />
+					<Add option="-Wno-unused" />
+					<Add option="-DHAVE_CONFIG_H" />
+					<Add option="-DBUILD_STATIC" />
+					<Add option="-DREGEX_STATIC" />
+					<Add directory="iniparser" />
+					<Add directory="regex-2.7" />
+				</Compiler>
+			</Target>
+			<Target title="Release">
+				<Option output="bin/Release/test_gen_scatter_loading" prefix_auto="1" extension_auto="1" />
+				<Option object_output="obj/Release/" />
+				<Option type="1" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-O2" />
+				</Compiler>
+				<Linker>
+					<Add option="-s" />
+				</Linker>
+			</Target>
+		</Build>
+		<Compiler>
+			<Add option="-Wall" />
+		</Compiler>
+		<Unit filename="iniparser/dictionary.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="iniparser/dictionary.h" />
+		<Unit filename="iniparser/iniparser.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="iniparser/iniparser.h" />
+		<Unit filename="main.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="regex-2.7/config.h" />
+		<Unit filename="regex-2.7/re_comp.h" />
+		<Unit filename="regex-2.7/regex.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="regex-2.7/regex.h" />
+		<Unit filename="regex-2.7/regex_internal.h" />
+		<Extensions>
+			<code_completion />
+			<envvars />
+			<debugger />
+			<lib_finder disable_auto="1" />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>
