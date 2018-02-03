@@ -30,6 +30,11 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-O2" />
+					<Add option="-DHAVE_CONFIG_H" />
+					<Add option="-DBUILD_STATIC" />
+					<Add option="-DREGEX_STATIC" />
+					<Add directory="iniparser" />
+					<Add directory="regex-2.7" />
 				</Compiler>
 				<Linker>
 					<Add option="-s" />

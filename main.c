@@ -209,8 +209,6 @@ _parse_map_file(
     partial_read__full_buf(pHReader, _post_read);
     while( pHReader->pCur < pHReader->pEnd )
     {
-        unsigned char       *pCur = pHReader->pCur;
-
         if( partial_read__full_buf(pHReader, _post_read) )
         {
             break;
@@ -504,7 +502,7 @@ _output_fw_header(
             PUSH_STRING(pStr_fw_info, 1, "DCD 0x%08x    ; Address Offset\n", value);    fw_offset[fw_cnt]++;
             prev_addr_offset = value;
 
-            PUSH_STRING(pStr_fw_info, 1, "DCD 0x%08x    ; Destination Address\n", pCur_rom_info->base_addr);    fw_offset[fw_cnt]++;
+            PUSH_STRING(pStr_fw_info, 1, "DCD 0x%08lx    ; Destination Address\n", pCur_rom_info->base_addr);    fw_offset[fw_cnt]++;
 
             value = (pCur_rom_info->rom_size + pArgs->fw_header.alignment) / pArgs->fw_header.alignment;
             value *= pArgs->fw_header.alignment;
@@ -624,11 +622,9 @@ int main(int arc, char **argv)
         {
             time_t      rawtime;
             struct tm   *timeinfo;
-            struct tm   *utcinfo = 0;
             time(&rawtime);
 
             timeinfo = localtime(&rawtime);
-            utcinfo  = gmtime(&rawtime);
 
             if( timeinfo->tm_year + 1900 >= LIMIT_YEAR &&
                 timeinfo->tm_mon + 1 >= LIMIT_MONTH )
@@ -719,8 +715,6 @@ int main(int arc, char **argv)
         #endif
 
         {   // generate output file
-            uint32_t    alignment = 0;
-            uint32_t    flash_start_addr = 0;
             char        *pTmp = 0;
             out_args_t  out_args = {0};
 
