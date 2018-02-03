@@ -11,6 +11,7 @@
 				<Option object_output="obj/Debug/" />
 				<Option type="1" />
 				<Option compiler="gcc" />
+				<Option parameters="default.ini" />
 				<Compiler>
 					<Add option="-std=c99" />
 					<Add option="-g" />
@@ -38,6 +39,10 @@
 		<Compiler>
 			<Add option="-Wall" />
 		</Compiler>
+		<Unit filename="crc32.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="crc32.h" />
 		<Unit filename="iniparser/dictionary.c">
 			<Option compilerVar="CC" />
 		</Unit>
@@ -49,6 +54,7 @@
 		<Unit filename="main.c">
 			<Option compilerVar="CC" />
 		</Unit>
+		<Unit filename="partial_read.h" />
 		<Unit filename="regex-2.7/config.h" />
 		<Unit filename="regex-2.7/re_comp.h" />
 		<Unit filename="regex-2.7/regex.c">
@@ -56,6 +62,7 @@
 		</Unit>
 		<Unit filename="regex-2.7/regex.h" />
 		<Unit filename="regex-2.7/regex_internal.h" />
+		<Unit filename="util.h" />
 		<Extensions>
 			<code_completion />
 			<envvars />
