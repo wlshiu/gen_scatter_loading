@@ -228,53 +228,52 @@ _parse_map_file(
                 {
                     REGEX_MATCH_EXTRACT(str_buf, pAct_str, match_info, 4);
                     pObj_info_cur->rw_data_size = strtoul(str_buf, NULL, 10);
-    }
+                }
 
                 memset(str_buf, 0x0, MAX_STR_LEN);
                 if( match_info[5].rm_so != -1 )
-    {
+                {
                     REGEX_MATCH_EXTRACT(str_buf, pAct_str, match_info, 5);
                     pObj_info_cur->zi_data_size = strtoul(str_buf, NULL, 10);
-}
+                }
 
                 memset(str_buf, 0x0, MAX_STR_LEN);
                 if( match_info[6].rm_so != -1 )
-{
+                {
                     REGEX_MATCH_EXTRACT(str_buf, pAct_str, match_info, 6);
                     pObj_info_cur->debug_size = strtoul(str_buf, NULL, 10);
-    }
+                }
 
                 memset(str_buf, 0x0, MAX_STR_LEN);
                 if( match_info[7].rm_so != -1 )
-    {
+                {
                     REGEX_MATCH_EXTRACT(str_buf, pAct_str, match_info, 7);
                     snprintf(pObj_info_cur->obj_name, 64, "%s", str_buf);
-    }
+                }
 
                 if( *ppObj_info )
-{
+                {
                     obj_info_t      *pObj_info_tmp = (obj_info_t*)(*ppObj_info);
 
                     while( pObj_info_tmp->next )
-    {
+                    {
                         pObj_info_tmp = pObj_info_tmp->next;
-    }
+                    }
 
                     pObj_info_tmp->next = pObj_info_cur;
-    }
+                }
                 else
-    {
+                {
                     *ppObj_info = pObj_info_cur;
+                }
+            }
         }
     }
 
-    }
-}
-
     regfree(&hRegex_obj_info);
 
-        return rval;
-    }
+    return rval;
+}
 
 //=============================================================================
 //                  Public Function Definition
