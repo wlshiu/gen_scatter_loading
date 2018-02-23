@@ -40,6 +40,16 @@
     strncpy(pBuf, &pLine_str[regmatch_info[match_idx].rm_so], regmatch_info[match_idx].rm_eo - regmatch_info[match_idx].rm_so)
 
 #define BIG_ENDIAN(x)       ((((x) & 0xff) << 24) | (((x) & 0xff00) << 8) | (((x) & 0xff0000) >> 8) | (((x) & 0xff000000) >> 24))
+
+#define PUSH_TO_LIST(struct_type, ppRoot, pNew)                                 \
+            do{ if( *(ppRoot) ) {                                               \
+                    struct_type     *pTmp = (struct_type *)(*(ppRoot));         \
+                    while( pTmp->next )  pTmp = pTmp->next;                     \
+                    pTmp->next = pNew;                                          \
+                } else {                                                        \
+                    *(ppRoot) = pNew;                                           \
+                }                                                               \
+            }while(0)
 //=============================================================================
 //                  Structure Definition
 //=============================================================================
@@ -55,12 +65,47 @@ typedef struct obj_info
     uint32_t    zi_data_size;
     uint32_t    debug_size;
 
+    bool        is_used;
+
 } obj_info_t;
 
+typedef struct rom_region
+{
+    struct rom_region   *next;
+
+    char        load_region_addr[16];
+    char        exec_region_addr[16];
+    uint32_t    region_size;
+
+} rom_region_t;
+
+typedef struct rom_region_mgr
+{
+    uint32_t        rom_num;
+    char            exec_region_prefix[64];
+    rom_region_t    *pRom_region;
+
+} rom_region_mgr_t;
+
+typedef struct def_obj
+{
+    struct def_obj      *next;
+    char                obj_name[64];
+
+} def_obj_t;
+
+typedef struct def_obj_mgr
+{
+    uint32_t    def_obj_num;
+    def_obj_t   *pDef_obj;
+
+} def_obj_mgr_t;
 //=============================================================================
 //                  Global Data Definition
 //=============================================================================
-static obj_info_t   *g_pObj_first = 0;
+static obj_info_t           *g_pObj_first = 0;
+static def_obj_mgr_t        g_def_obj_mgr = {0};
+static rom_region_mgr_t     g_rom_region_mgr = {0};
 //=============================================================================
 //                  Private Function Definition
 //=============================================================================
@@ -192,7 +237,7 @@ _parse_map_file(
             if( rval == REG_NOMATCH || rval )
                 continue;
 
-            {   // check match items
+            { // check match items
                 obj_info_t      *pObj_info_cur = 0;
 
                 if( !(pObj_info_cur = malloc(sizeof(obj_info_t))) )
@@ -251,6 +296,9 @@ _parse_map_file(
                     snprintf(pObj_info_cur->obj_name, 64, "%s", str_buf);
                 }
 
+            #if 1
+                PUSH_TO_LIST(obj_info_t, ppObj_info, pObj_info_cur);
+            #else
                 if( *ppObj_info )
                 {
                     obj_info_t      *pObj_info_tmp = (obj_info_t*)(*ppObj_info);
@@ -266,6 +314,7 @@ _parse_map_file(
                 {
                     *ppObj_info = pObj_info_cur;
                 }
+            #endif
             }
         }
     }
@@ -275,6 +324,261 @@ _parse_map_file(
     return rval;
 }
 
+
+static int
+_parse_def_obj(
+    dictionary      *pIni,
+    def_obj_mgr_t   *pDef_obj_mgr)
+{
+    int         rval = 0;
+
+    do{
+        int         i;
+        int         num = 0;
+        char        str_buf[MAX_STR_LEN] = {0};
+
+        num = iniparser_getint(pIni, "obj:default_obj_num", 0);
+        pDef_obj_mgr->def_obj_num = num;
+
+        for(i = 0; i < num; i++)
+        {
+            const char      *pName = 0;
+            def_obj_t       *pDef_obj_new = 0;
+
+            snprintf(str_buf, MAX_STR_LEN, "obj:default_obj_%d", i + 1);
+            pName = iniparser_getstring(pIni, str_buf, NULL);
+            if( !pName )
+            {
+                rval = -1;
+                err_msg("no '%s' item !\n", str_buf);
+                break;
+            }
+
+            if( !(pDef_obj_new = malloc(sizeof(def_obj_t))) )
+            {
+                rval = -1;
+                err_msg("malloc %d fail !\n", sizeof(def_obj_t));
+                break;
+            }
+            memset(pDef_obj_new, 0x0, sizeof(def_obj_t));
+
+            snprintf(pDef_obj_new->obj_name, 64, "%s", pName);
+
+            PUSH_TO_LIST(def_obj_t, &pDef_obj_mgr->pDef_obj, pDef_obj_new);
+        }
+    }while(0);
+
+    return rval;
+}
+
+static int
+_parse_rom_region(
+    dictionary          *pIni,
+    rom_region_mgr_t    *pRom_region_mgr)
+{
+    int     rval = 0;
+
+    do{
+        int         i;
+        int         num = 0;
+        char        str_buf[MAX_STR_LEN] = {0};
+        char        *pPrefix = 0;
+
+        num = iniparser_getint(pIni, "rom:rom_cnt", 0);
+        pRom_region_mgr->rom_num = num;
+
+        pPrefix = iniparser_getstring(pIni, "rom:rom_exec_region_prefix", NULL);
+        if( !pPrefix )
+        {
+            rval = -1;
+            err_msg("no '%s' item !\n", str_buf);
+            break;
+        }
+
+        snprintf(pRom_region_mgr->exec_region_prefix, 64, "%s", pPrefix);
+
+        for(i = 0; i < num; i++)
+        {
+            rom_region_t    *pRom_region_new = 0;
+            const char      *pLoad_region_addr = 0;
+            const char      *pExec_region_addr = 0;
+            const char      *pRegion_size = 0;
+
+            snprintf(str_buf, MAX_STR_LEN, "rom:rom_load_region_addr_%d", i + 1);
+            pLoad_region_addr = iniparser_getstring(pIni, str_buf, NULL);
+            if( !pLoad_region_addr )
+            {
+                rval = -1;
+                err_msg("no '%s' item !\n", str_buf);
+                break;
+            }
+
+            snprintf(str_buf, MAX_STR_LEN, "rom:rom_exec_region_addr_%d", i + 1);
+            pExec_region_addr = iniparser_getstring(pIni, str_buf, NULL);
+            if( !pExec_region_addr )
+            {
+                rval = -1;
+                err_msg("no '%s' item !\n", str_buf);
+                break;
+            }
+
+            snprintf(str_buf, MAX_STR_LEN, "rom:rom_load_region_size_%d", i + 1);
+            pRegion_size = iniparser_getstring(pIni, str_buf, NULL);
+            if( !pRegion_size )
+            {
+                rval = -1;
+                err_msg("no '%s' item !\n", str_buf);
+                break;
+            }
+
+            if( !(pRom_region_new = malloc(sizeof(rom_region_t))) )
+            {
+                rval = -1;
+                err_msg("malloc %s fail !\n", sizeof(rom_region_t));
+                break;
+            }
+            memset(pRom_region_new, 0x0, sizeof(rom_region_t));
+
+            snprintf(pRom_region_new->load_region_addr, 16, "%s", pLoad_region_addr);
+            snprintf(pRom_region_new->exec_region_addr, 16, "%s", pExec_region_addr);
+            pRom_region_new->region_size = (pRegion_size[0] == '0' && pRegion_size[1] == 'x')
+                                         ? strtoul(&pRegion_size[2], NULL, 16)
+                                         : strtoul(pRegion_size, NULL, 10);
+
+            PUSH_TO_LIST(rom_region_t, &pRom_region_mgr->pRom_region, pRom_region_new);
+        }
+    }while(0);
+    return rval;
+}
+
+static int
+_gen_sct_file(
+    const char          *pOut_path,
+    obj_info_t          *pObj_info,
+    def_obj_mgr_t       *pDef_obj_mgr,
+    rom_region_mgr_t    *pRom_region_mgr)
+{
+#define STRING_BUF_SIZE (200<<10)
+    int     rval = 0;
+    FILE    *fout = 0;
+    char    *pStr_buf = 0;
+
+    do{
+        int     i, j;
+        if( !(fout = fopen(pOut_path, "wb")) )
+        {
+            rval = -1;
+            err_msg("open '%s' fail !\n", pOut_path);
+            break;
+        }
+
+        if( !(pStr_buf = malloc(STRING_BUF_SIZE)) )
+        {
+            rval = -1;
+            err_msg("malloc %d fail !\n", STRING_BUF_SIZE);
+            break;
+        }
+        memset(pStr_buf, 0x0, STRING_BUF_SIZE);
+
+        PUSH_STRING(pStr_buf, 0, "%s", "#! armcc -E -I ..\\src\n\n");
+        PUSH_STRING(pStr_buf, 0, "%s", "; *************************************************************\n");
+        PUSH_STRING(pStr_buf, 0, "%s", "; *** Scatter-Loading Description File generated by uVision ***\n");
+        PUSH_STRING(pStr_buf, 0, "%s", "; *************************************************************\n\n");
+        FLUSH_STRING(fout, pStr_buf);
+
+        for(i = 0; i < pRom_region_mgr->rom_num; i++)
+        {
+            int             cnt = 0, remain_size = 0;
+            rom_region_t    *pRom_region_cur = pRom_region_mgr->pRom_region;
+            rom_region_t    *pRom_region_act = 0;
+
+            // search ROM region index
+            while( pRom_region_cur )
+            {
+                if( cnt == i )
+                {
+                    pRom_region_act = pRom_region_cur;
+                    break;
+                }
+
+                pRom_region_cur = pRom_region_cur->next;
+                cnt++;
+            }
+
+            if( !pRom_region_act )
+            {
+                err_msg("%s", "no ROM region info !\n");
+                break;
+            }
+
+            remain_size = pRom_region_act->region_size;
+
+            PUSH_STRING(pStr_buf, 0, "Load_Region_IROM%d %s 0x%08X {\n",
+                        i + 1,
+                        pRom_region_act->load_region_addr,
+                        pRom_region_act->region_size);
+
+            PUSH_STRING(pStr_buf, 1, "Exec_Region_%s_IROM%d %s 0x%08X {\n",
+                        pRom_region_mgr->exec_region_prefix,
+                        i + 1,
+                        pRom_region_act->exec_region_addr,
+                        pRom_region_act->region_size);
+
+            FLUSH_STRING(fout, pStr_buf);
+
+            // default objects put to the 1-st region
+            if( i == 0 )
+            {
+                def_obj_t   *pDef_obj_cur = pDef_obj_mgr->pDef_obj;
+                def_obj_t   *pDef_obj_act = 0;
+
+                while( pDef_obj_cur )
+                {
+                    uint32_t        len = 0;
+                    obj_info_t      *pObj_info_cur = pObj_info;
+
+                    if( remain_size < 0 )
+                        break;
+
+                    pDef_obj_act = pDef_obj_cur;
+                    pDef_obj_cur = pDef_obj_cur->next;
+
+                    // mark the used object and re-calculate the remain size
+                    len = strlen(pDef_obj_act->obj_name);
+                    while( pObj_info_cur )
+                    {
+                        if( pObj_info_cur->is_used == false &&
+                            strncmp(pDef_obj_act->obj_name, pObj_info_cur->obj_name, len) == 0 )
+                        {
+                            pObj_info_cur->is_used = true;
+                            break;
+                        }
+
+                        pObj_info_cur = pObj_info_cur->next;
+                    }
+
+                    if( pObj_info_cur )
+                    {
+                        remain_size -= pObj_info_cur->code_size;
+                        PUSH_STRING(pStr_buf, 2, "%s (+RO)\n", pDef_obj_act->obj_name);
+                    }
+
+                }
+            }
+
+
+            PUSH_STRING(pStr_buf, 1, "%s", "}\n");
+            PUSH_STRING(pStr_buf, 0, "%s", "}\n\n");
+            FLUSH_STRING(fout, pStr_buf);
+        }
+
+    }while(0);
+
+    if( pStr_buf )  free(pStr_buf);
+    if( fout )      fclose(fout);
+
+    return rval;
+}
 //=============================================================================
 //                  Public Function Definition
 //=============================================================================
@@ -323,22 +627,22 @@ int main(int arc, char **argv)
             break;
         }
 
-        snprintf(str_buf, MAX_STR_LEN, "%s", "in_file:map_file");
-            pPath = iniparser_getstring(pIni, str_buf, NULL);
-            if( !pPath )
-            {
-                rval = -1;
-                err_msg("no '%s' file !\n", str_buf);
-                break;
-            }
+        snprintf(str_buf, MAX_STR_LEN, "%s", "file:map_file");
+        pPath = iniparser_getstring(pIni, str_buf, NULL);
+        if( !pPath )
+        {
+            rval = -1;
+            err_msg("no '%s' file !\n", str_buf);
+            break;
+        }
 
         if( (rval = _create_reader(pHReader , pPath)) )
-                break;
+            break;
 
         _parse_map_file(pHReader, &g_pObj_first);
 
         #if 0
-            {
+        {
             FILE            *fout = 0;
             obj_info_t      *pObj_tmp = g_pObj_first;
 
@@ -362,8 +666,58 @@ int main(int arc, char **argv)
         }
         #endif
 
+        _parse_def_obj(pIni, &g_def_obj_mgr);
+
+        _parse_rom_region(pIni, &g_rom_region_mgr);
+
+        snprintf(str_buf, MAX_STR_LEN, "%s", "file:out_sct_file");
+        pPath = iniparser_getstring(pIni, str_buf, NULL);
+        if( !pPath )
+        {
+            rval = -1;
+            err_msg("no '%s' file !\n", str_buf);
+            break;
+        }
+
+        _gen_sct_file(pPath, g_pObj_first, &g_def_obj_mgr, &g_rom_region_mgr);
 
     } while(0);
+
+    if( g_pObj_first )
+    {
+        obj_info_t       *pObj_cur = g_pObj_first;
+        while( pObj_cur )
+        {
+            obj_info_t       *pObj_tmp = pObj_cur;
+
+            pObj_cur = pObj_cur->next;
+            free(pObj_tmp);
+        }
+    }
+
+    if( g_def_obj_mgr.pDef_obj )
+    {
+        def_obj_t       *pObj_cur = g_def_obj_mgr.pDef_obj;
+        while( pObj_cur )
+        {
+            def_obj_t       *pObj_tmp = pObj_cur;
+
+            pObj_cur = pObj_cur->next;
+            free(pObj_tmp);
+        }
+    }
+
+    if( g_rom_region_mgr.pRom_region )
+    {
+        rom_region_t       *pRom_cur = g_rom_region_mgr.pRom_region;
+        while( pRom_cur )
+        {
+            rom_region_t       *pRom_tmp = pRom_cur;
+
+            pRom_cur = pRom_cur->next;
+            free(pRom_tmp);
+        }
+    }
 
     _destroy_reader(pHReader);
 
