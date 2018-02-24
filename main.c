@@ -71,6 +71,13 @@ typedef struct obj_info
 
 } obj_info_t;
 
+typedef struct obj_info_db
+{
+    uint32_t        total_obj_num;
+    obj_info_t      *pObj_info;
+
+} obj_info_db_t;
+
 /**
  *  region info
  */
@@ -134,7 +141,7 @@ typedef struct def_obj_mgr
 //=============================================================================
 //                  Global Data Definition
 //=============================================================================
-static obj_info_t           *g_pObj_first = 0;
+static obj_info_db_t        g_obj_info_db = {0};
 static def_obj_mgr_t        g_def_obj_mgr = {0};
 static rom_region_mgr_t     g_rom_region_mgr = {0};
 //=============================================================================
@@ -222,7 +229,7 @@ _post_read(unsigned char *pBuf, int buf_size)
 static int
 _parse_map_file(
     partial_read_t  *pHReader,
-    obj_info_t      **ppObj_info)
+    obj_info_db_t   *pObj_info_db)
 {
     int         rval = 0;
     uint32_t    bFind_start_tag = 0;
@@ -327,7 +334,8 @@ _parse_map_file(
                     snprintf(pObj_info_cur->obj_name, 64, "%s.o", str_buf);
                 }
 
-                PUSH_TO_LIST(obj_info_t, ppObj_info, pObj_info_cur);
+                PUSH_TO_LIST(obj_info_t, &pObj_info_db->pObj_info, pObj_info_cur);
+                pObj_info_db->total_obj_num++;
             }
         }
     }
@@ -502,7 +510,7 @@ _parse_rom_region(
 static int
 _gen_sct_file(
     const char          *pOut_path,
-    obj_info_t          *pObj_db,
+    obj_info_db_t       *pObj_info_db,
     def_obj_mgr_t       *pDef_obj_mgr,
     rom_region_mgr_t    *pRom_region_mgr)
 {
@@ -537,7 +545,7 @@ _gen_sct_file(
 
         for(i = 0; i < pRom_region_mgr->rom_num; i++)
         {
-            int                 cnt = 0, remain_size = 0;
+            int                 cnt = 0;
             rom_region_t        *pRom_region_cur = pRom_region_mgr->pRom_region;
             rom_region_t        *pRom_region_act = 0;
             region_def_obj_t    *pRegion_def_obj_cur = &pDef_obj_mgr->load_region_obj[i];
@@ -574,6 +582,7 @@ _gen_sct_file(
             for(j = 0; j < pRom_region_act->exec_region_num; j++)
             {
                 uint32_t            remain_size = 0;
+                bool                is_next_region = false;
                 def_obj_t           *pDef_obj_cur = pRegion_def_obj_cur->pDef_obj;
                 region_info_t       *pExec_region_cur = &pRom_region_act->exec_region[j];
 
@@ -591,7 +600,7 @@ _gen_sct_file(
                 while( pDef_obj_cur )
                 {
                     def_obj_t       *pDef_obj_act = pDef_obj_cur;
-                    obj_info_t      *pObj = pObj_db;
+                    obj_info_t      *pObj = pObj_info_db->pObj_info;
                     uint32_t        len = 0;
                     bool            is_valid = false;
 
@@ -602,8 +611,7 @@ _gen_sct_file(
                     len = strlen(pDef_obj_act->obj_name);
                     while( pObj )
                     {
-                        if( pObj->is_used == false &&
-                            strncmp(pDef_obj_act->obj_name, pObj->obj_name, len) == 0 )
+                        if( strncmp(pDef_obj_act->obj_name, pObj->obj_name, len) == 0 )
                         {
                             is_valid = true;
                             break;
@@ -611,13 +619,19 @@ _gen_sct_file(
                         pObj = pObj->next;
                     }
 
+                    //------------------------------
+                    // output default objects
                     if( is_valid )
                     {
+                        if( pObj->is_used == true )
+                            continue;
+
                         if( remain_size < (pObj->code_size + pObj->rw_data_size + pObj->zi_data_size) )
                         {
                             printf("default object '%s' is not enough space in 'Exec_Region_%s_IROM%d_%d'\n",
                                    pObj->obj_name, pRom_region_mgr->exec_region_prefix,
                                    i + 1, j + 1);
+                            is_next_region = true;
                             break;
                         }
 
@@ -637,19 +651,102 @@ _gen_sct_file(
                         }
 
                         pObj->is_used = true;
+                        pObj_info_db->total_obj_num--;
                     }
                     else
                     {
                         printf("the default object '%s' is not exist !!\n", pDef_obj_act->obj_name);
+                        is_next_region = true;
                     }
+                }
+
+                if( is_next_region == true )
+                {
+                    PUSH_STRING(pStr_buf, 1, "} ; remain %d\n\n", remain_size);
+                    FLUSH_STRING(fout, pStr_buf);
+                    continue;
                 }
 
                 //----------------------------------------------
                 // put objects which are not the default objects to this exec region
                 // ps. it also should check the other default objects in the other exec region
+                while( remain_size && pObj_info_db->total_obj_num )
+                {
+                    obj_info_t      *pObj_cur = pObj_info_db->pObj_info;
 
+                    while( pObj_cur )
+                    {
+                        int             k;
+                        bool            is_valid = true;
+                        obj_info_t      *pObj = pObj_cur;
+
+                        pObj_cur = pObj_cur->next;
+
+                        // object has be used
+                        if( pObj->is_used == true )
+                            continue;
+
+                        // check current object is not default objects
+                        for(k = 0; k < MAX_LOAD_REGION_NUM; k++)
+                        {
+                            region_def_obj_t    *pRegion_def_obj_cur = &pDef_obj_mgr->load_region_obj[k];
+
+                            pDef_obj_cur = pRegion_def_obj_cur->pDef_obj;
+                            while( pDef_obj_cur )
+                            {
+                                def_obj_t       *pDef_obj_act = pDef_obj_cur;
+                                uint32_t        len = 0;
+
+                                pDef_obj_cur = pDef_obj_cur->next;
+                                len = strlen(pDef_obj_act->obj_name);
+                                if( strncmp(pObj->obj_name, pDef_obj_act->obj_name, len) == 0 )
+                                {
+                                    is_valid = false;
+                                    break;
+                                }
+                            }
+
+                            if( is_valid == false )
+                                break;
+                        }
+
+                        if( is_valid == false )
+                            continue;
+
+                        // check space is enough or not
+                        if( remain_size < (pObj->code_size + pObj->rw_data_size + pObj->zi_data_size) )
+                        {
+                            is_next_region = true;
+                            break;
+                        }
+
+                        //----------------------
+                        // output object
+                        PUSH_STRING(pStr_buf, 2, "%s (+RO) ; size=%d\n", pObj->obj_name, pObj->code_size);
+                        remain_size -= pObj->code_size;
+
+                        if( pObj->rw_data_size )
+                        {
+                            PUSH_STRING(pStr_buf, 2, "%s (+RW) ; size=%d\n", pObj->obj_name, pObj->rw_data_size);
+                            remain_size -= pObj->rw_data_size;
+                        }
+
+                        if( pObj->zi_data_size )
+                        {
+                            PUSH_STRING(pStr_buf, 2, "%s (+ZI) ; size=%d\n", pObj->obj_name, pObj->zi_data_size);
+                            remain_size -= pObj->zi_data_size;
+                        }
+
+                        pObj->is_used = true;
+                        pObj_info_db->total_obj_num--;
+                    }
+
+                    if( is_next_region == true )
+                        break;
+                }
 
                 PUSH_STRING(pStr_buf, 1, "} ; remain %d\n\n", remain_size);
+                FLUSH_STRING(fout, pStr_buf);
             }
 
             PUSH_STRING(pStr_buf, 0, "%s", "}\n\n");
@@ -724,7 +821,7 @@ int main(int arc, char **argv)
         if( (rval = _create_reader(pHReader , pPath)) )
             break;
 
-        _parse_map_file(pHReader, &g_pObj_first);
+        _parse_map_file(pHReader, &g_obj_info_db);
 
         #if 0
         {
@@ -764,13 +861,13 @@ int main(int arc, char **argv)
             break;
         }
 
-        _gen_sct_file(pPath, g_pObj_first, &g_def_obj_mgr, &g_rom_region_mgr);
+        _gen_sct_file(pPath, &g_obj_info_db, &g_def_obj_mgr, &g_rom_region_mgr);
 
     } while(0);
 
-    if( g_pObj_first )
+    if( g_obj_info_db.pObj_info )
     {
-        obj_info_t       *pObj_cur = g_pObj_first;
+        obj_info_t       *pObj_cur = g_obj_info_db.pObj_info;
         while( pObj_cur )
         {
             obj_info_t       *pObj_tmp = pObj_cur;
