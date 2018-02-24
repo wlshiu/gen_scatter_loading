@@ -28,7 +28,9 @@
 #define MAX_BUFFER_SIZE             (2 << 20)
 #define MAX_STR_LEN                 256
 
-#define DECLARING_MESSAGE           "Automatically generated file; DO NOT EDIT."
+#define MAX_LOAD_REGION_NUM         10
+#define MAX_EXEC_REGION_NUM         10
+
 //=============================================================================
 //                  Macro Definition
 //=============================================================================
@@ -69,16 +71,30 @@ typedef struct obj_info
 
 } obj_info_t;
 
+/**
+ *  region info
+ */
+typedef struct region_info
+{
+    char        region_addr[16];
+    uint32_t    region_size;
+
+} region_info_t;
+
 typedef struct rom_region
 {
     struct rom_region   *next;
 
-    char        load_region_addr[16];
-    char        exec_region_addr[16];
-    uint32_t    region_size;
+    region_info_t   load_region;
+
+    uint32_t        exec_region_num;
+    region_info_t   exec_region[MAX_EXEC_REGION_NUM];
 
 } rom_region_t;
 
+/**
+ *  mgr
+ */
 typedef struct rom_region_mgr
 {
     uint32_t        rom_num;
@@ -87,6 +103,9 @@ typedef struct rom_region_mgr
 
 } rom_region_mgr_t;
 
+/**
+ *  default Objects
+ */
 typedef struct def_obj
 {
     struct def_obj      *next;
@@ -94,10 +113,22 @@ typedef struct def_obj
 
 } def_obj_t;
 
-typedef struct def_obj_mgr
+/**
+ *  default objects in a region
+ */
+typedef struct region_def_obj
 {
     uint32_t    def_obj_num;
     def_obj_t   *pDef_obj;
+
+} region_def_obj_t;
+
+/**
+ *  mgr
+ */
+typedef struct def_obj_mgr
+{
+    region_def_obj_t   load_region_obj[MAX_LOAD_REGION_NUM];
 
 } def_obj_mgr_t;
 //=============================================================================
@@ -293,28 +324,10 @@ _parse_map_file(
                 if( match_info[7].rm_so != -1 )
                 {
                     REGEX_MATCH_EXTRACT(str_buf, pAct_str, match_info, 7);
-                    snprintf(pObj_info_cur->obj_name, 64, "%s", str_buf);
+                    snprintf(pObj_info_cur->obj_name, 64, "%s.o", str_buf);
                 }
 
-            #if 1
                 PUSH_TO_LIST(obj_info_t, ppObj_info, pObj_info_cur);
-            #else
-                if( *ppObj_info )
-                {
-                    obj_info_t      *pObj_info_tmp = (obj_info_t*)(*ppObj_info);
-
-                    while( pObj_info_tmp->next )
-                    {
-                        pObj_info_tmp = pObj_info_tmp->next;
-                    }
-
-                    pObj_info_tmp->next = pObj_info_cur;
-                }
-                else
-                {
-                    *ppObj_info = pObj_info_cur;
-                }
-            #endif
             }
         }
     }
@@ -333,38 +346,47 @@ _parse_def_obj(
     int         rval = 0;
 
     do{
-        int         i;
-        int         num = 0;
+        int         i, obj_cnt = 0;
         char        str_buf[MAX_STR_LEN] = {0};
 
-        num = iniparser_getint(pIni, "obj:default_obj_num", 0);
-        pDef_obj_mgr->def_obj_num = num;
-
-        for(i = 0; i < num; i++)
+        for(i = 0; i < MAX_LOAD_REGION_NUM; i++)
         {
-            const char      *pName = 0;
-            def_obj_t       *pDef_obj_new = 0;
+            int                 num = 0;
+            region_def_obj_t    *pRegion_obj_cur = &pDef_obj_mgr->load_region_obj[i];
 
-            snprintf(str_buf, MAX_STR_LEN, "obj:default_obj_%d", i + 1);
-            pName = iniparser_getstring(pIni, str_buf, NULL);
-            if( !pName )
+            snprintf(str_buf, MAX_STR_LEN, "obj:load_region_%d_obj_num", i + 1);
+            pRegion_obj_cur->def_obj_num = num = iniparser_getint(pIni, str_buf, 0);
+            if( pRegion_obj_cur->def_obj_num == 0 )
+                continue;
+
+            for(obj_cnt = 0; obj_cnt < pRegion_obj_cur->def_obj_num; obj_cnt++)
             {
-                rval = -1;
-                err_msg("no '%s' item !\n", str_buf);
-                break;
+                const char      *pName = 0;
+                def_obj_t       *pDef_obj_new = 0;
+
+                snprintf(str_buf, MAX_STR_LEN, "obj:load_region_%d_obj_%d", i + 1, obj_cnt + 1);
+                pName = iniparser_getstring(pIni, str_buf, NULL);
+                if( !pName )
+                {
+                    rval = -1;
+                    err_msg("no '%s' item !\n", str_buf);
+                    break;
+                }
+
+                if( !(pDef_obj_new = malloc(sizeof(def_obj_t))) )
+                {
+                    rval = -1;
+                    err_msg("malloc %d fail !\n", sizeof(def_obj_t));
+                    break;
+                }
+                memset(pDef_obj_new, 0x0, sizeof(def_obj_t));
+
+                snprintf(pDef_obj_new->obj_name, 64, "%s", pName);
+
+                PUSH_TO_LIST(def_obj_t, &pRegion_obj_cur->pDef_obj, pDef_obj_new);
             }
 
-            if( !(pDef_obj_new = malloc(sizeof(def_obj_t))) )
-            {
-                rval = -1;
-                err_msg("malloc %d fail !\n", sizeof(def_obj_t));
-                break;
-            }
-            memset(pDef_obj_new, 0x0, sizeof(def_obj_t));
-
-            snprintf(pDef_obj_new->obj_name, 64, "%s", pName);
-
-            PUSH_TO_LIST(def_obj_t, &pDef_obj_mgr->pDef_obj, pDef_obj_new);
+            if( rval )      break;
         }
     }while(0);
 
@@ -382,9 +404,9 @@ _parse_rom_region(
         int         i;
         int         num = 0;
         char        str_buf[MAX_STR_LEN] = {0};
-        char        *pPrefix = 0;
+        const char  *pPrefix = 0;
 
-        num = iniparser_getint(pIni, "rom:rom_cnt", 0);
+        num = iniparser_getint(pIni, "rom:rom_num", 0);
         pRom_region_mgr->rom_num = num;
 
         pPrefix = iniparser_getstring(pIni, "rom:rom_exec_region_prefix", NULL);
@@ -397,25 +419,18 @@ _parse_rom_region(
 
         snprintf(pRom_region_mgr->exec_region_prefix, 64, "%s", pPrefix);
 
-        for(i = 0; i < num; i++)
+        //-------------------------------------------
+        // get load region info
+        for(i = 0; i < pRom_region_mgr->rom_num; i++)
         {
+            int             exec_region_cnt = 0;
             rom_region_t    *pRom_region_new = 0;
             const char      *pLoad_region_addr = 0;
-            const char      *pExec_region_addr = 0;
             const char      *pRegion_size = 0;
 
             snprintf(str_buf, MAX_STR_LEN, "rom:rom_load_region_addr_%d", i + 1);
             pLoad_region_addr = iniparser_getstring(pIni, str_buf, NULL);
             if( !pLoad_region_addr )
-            {
-                rval = -1;
-                err_msg("no '%s' item !\n", str_buf);
-                break;
-            }
-
-            snprintf(str_buf, MAX_STR_LEN, "rom:rom_exec_region_addr_%d", i + 1);
-            pExec_region_addr = iniparser_getstring(pIni, str_buf, NULL);
-            if( !pExec_region_addr )
             {
                 rval = -1;
                 err_msg("no '%s' item !\n", str_buf);
@@ -439,11 +454,44 @@ _parse_rom_region(
             }
             memset(pRom_region_new, 0x0, sizeof(rom_region_t));
 
-            snprintf(pRom_region_new->load_region_addr, 16, "%s", pLoad_region_addr);
-            snprintf(pRom_region_new->exec_region_addr, 16, "%s", pExec_region_addr);
-            pRom_region_new->region_size = (pRegion_size[0] == '0' && pRegion_size[1] == 'x')
-                                         ? strtoul(&pRegion_size[2], NULL, 16)
-                                         : strtoul(pRegion_size, NULL, 10);
+            snprintf(pRom_region_new->load_region.region_addr, 16, "%s", pLoad_region_addr);
+            pRom_region_new->load_region.region_size = (pRegion_size[0] == '0' && pRegion_size[1] == 'x')
+                                                     ? strtoul(&pRegion_size[2], NULL, 16)
+                                                     : strtoul(pRegion_size, NULL, 10);
+
+            //-------------------------------------------
+            // get exec region info in a load region
+            snprintf(str_buf, MAX_STR_LEN, "rom:rom_load_region_%d_exec_num", i + 1);
+            pRom_region_new->exec_region_num = num = iniparser_getint(pIni, str_buf, 0);
+
+            for(exec_region_cnt = 0; exec_region_cnt < pRom_region_new->exec_region_num; exec_region_cnt++)
+            {
+                const char          *pExec_region_addr = 0;
+                region_info_t       *pRegion_info_cur = &pRom_region_new->exec_region[exec_region_cnt];
+
+                snprintf(str_buf, MAX_STR_LEN, "rom:rom_exec_region_addr_%d_%d", i + 1, exec_region_cnt + 1);
+                pExec_region_addr = iniparser_getstring(pIni, str_buf, NULL);
+                if( !pExec_region_addr )
+                {
+                    rval = -1;
+                    err_msg("no '%s' item !\n", str_buf);
+                    break;
+                }
+
+                snprintf(str_buf, MAX_STR_LEN, "rom:rom_exec_region_size_%d_%d", i + 1, exec_region_cnt + 1);
+                pRegion_size = iniparser_getstring(pIni, str_buf, NULL);
+                if( !pRegion_size )
+                {
+                    rval = -1;
+                    err_msg("no '%s' item !\n", str_buf);
+                    break;
+                }
+
+                snprintf(pRegion_info_cur->region_addr, 16, "%s", pExec_region_addr);
+                pRegion_info_cur->region_size = (pRegion_size[0] == '0' && pRegion_size[1] == 'x')
+                                              ? strtoul(&pRegion_size[2], NULL, 16)
+                                              : strtoul(pRegion_size, NULL, 10);
+            }
 
             PUSH_TO_LIST(rom_region_t, &pRom_region_mgr->pRom_region, pRom_region_new);
         }
@@ -454,12 +502,13 @@ _parse_rom_region(
 static int
 _gen_sct_file(
     const char          *pOut_path,
-    obj_info_t          *pObj_info,
+    obj_info_t          *pObj_db,
     def_obj_mgr_t       *pDef_obj_mgr,
     rom_region_mgr_t    *pRom_region_mgr)
 {
-#define STRING_BUF_SIZE (200<<10)
+    #define STRING_BUF_SIZE (200<<10)
     int     rval = 0;
+
     FILE    *fout = 0;
     char    *pStr_buf = 0;
 
@@ -488,11 +537,13 @@ _gen_sct_file(
 
         for(i = 0; i < pRom_region_mgr->rom_num; i++)
         {
-            int             cnt = 0, remain_size = 0;
-            rom_region_t    *pRom_region_cur = pRom_region_mgr->pRom_region;
-            rom_region_t    *pRom_region_act = 0;
+            int                 cnt = 0, remain_size = 0;
+            rom_region_t        *pRom_region_cur = pRom_region_mgr->pRom_region;
+            rom_region_t        *pRom_region_act = 0;
+            region_def_obj_t    *pRegion_def_obj_cur = &pDef_obj_mgr->load_region_obj[i];
 
-            // search ROM region index
+            //--------------------------------------
+            // get target region info
             while( pRom_region_cur )
             {
                 if( cnt == i )
@@ -511,72 +562,106 @@ _gen_sct_file(
                 break;
             }
 
-            remain_size = pRom_region_act->region_size;
-
-            PUSH_STRING(pStr_buf, 0, "Load_Region_IROM%d %s 0x%08X {\n",
+            //-------------------------------------------
+            // output load region info
+            PUSH_STRING(pStr_buf, 0, "Load_Region_IROM%d %s 0x%08X {\n\n",
                         i + 1,
-                        pRom_region_act->load_region_addr,
-                        pRom_region_act->region_size);
+                        pRom_region_act->load_region.region_addr,
+                        pRom_region_act->load_region.region_size);
 
-            PUSH_STRING(pStr_buf, 1, "Exec_Region_%s_IROM%d %s 0x%08X {\n",
-                        pRom_region_mgr->exec_region_prefix,
-                        i + 1,
-                        pRom_region_act->exec_region_addr,
-                        pRom_region_act->region_size);
-
-            FLUSH_STRING(fout, pStr_buf);
-
-            // default objects put to the 1-st region
-            if( i == 0 )
+            //----------------------------------------
+            // multi exec regions in a load region
+            for(j = 0; j < pRom_region_act->exec_region_num; j++)
             {
-                def_obj_t   *pDef_obj_cur = pDef_obj_mgr->pDef_obj;
-                def_obj_t   *pDef_obj_act = 0;
+                uint32_t            remain_size = 0;
+                def_obj_t           *pDef_obj_cur = pRegion_def_obj_cur->pDef_obj;
+                region_info_t       *pExec_region_cur = &pRom_region_act->exec_region[j];
 
+                PUSH_STRING(pStr_buf, 1, "Exec_Region_%s_IROM%d_%d %s 0x%08X {\n",
+                            pRom_region_mgr->exec_region_prefix,
+                            i + 1,
+                            j + 1,
+                            pExec_region_cur->region_addr,
+                            pExec_region_cur->region_size);
+
+                remain_size = pExec_region_cur->region_size;
+
+                //----------------------------------------
+                // put default objects to exec region
                 while( pDef_obj_cur )
                 {
+                    def_obj_t       *pDef_obj_act = pDef_obj_cur;
+                    obj_info_t      *pObj = pObj_db;
                     uint32_t        len = 0;
-                    obj_info_t      *pObj_info_cur = pObj_info;
+                    bool            is_valid = false;
 
-                    if( remain_size < 0 )
-                        break;
-
-                    pDef_obj_act = pDef_obj_cur;
                     pDef_obj_cur = pDef_obj_cur->next;
 
-                    // mark the used object and re-calculate the remain size
+                    //-----------------------------------
+                    // verify the default object in object's database
                     len = strlen(pDef_obj_act->obj_name);
-                    while( pObj_info_cur )
+                    while( pObj )
                     {
-                        if( pObj_info_cur->is_used == false &&
-                            strncmp(pDef_obj_act->obj_name, pObj_info_cur->obj_name, len) == 0 )
+                        if( pObj->is_used == false &&
+                            strncmp(pDef_obj_act->obj_name, pObj->obj_name, len) == 0 )
                         {
-                            pObj_info_cur->is_used = true;
+                            is_valid = true;
+                            break;
+                        }
+                        pObj = pObj->next;
+                    }
+
+                    if( is_valid )
+                    {
+                        if( remain_size < (pObj->code_size + pObj->rw_data_size + pObj->zi_data_size) )
+                        {
+                            printf("default object '%s' is not enough space in 'Exec_Region_%s_IROM%d_%d'\n",
+                                   pObj->obj_name, pRom_region_mgr->exec_region_prefix,
+                                   i + 1, j + 1);
                             break;
                         }
 
-                        pObj_info_cur = pObj_info_cur->next;
-                    }
+                        PUSH_STRING(pStr_buf, 2, "%s (+RO) ; size=%d\n", pObj->obj_name, pObj->code_size);
+                        remain_size -= pObj->code_size;
 
-                    if( pObj_info_cur )
+                        if( pObj->rw_data_size )
+                        {
+                            PUSH_STRING(pStr_buf, 2, "%s (+RW) ; size=%d\n", pObj->obj_name, pObj->rw_data_size);
+                            remain_size -= pObj->rw_data_size;
+                        }
+
+                        if( pObj->zi_data_size )
+                        {
+                            PUSH_STRING(pStr_buf, 2, "%s (+ZI) ; size=%d\n", pObj->obj_name, pObj->zi_data_size);
+                            remain_size -= pObj->zi_data_size;
+                        }
+
+                        pObj->is_used = true;
+                    }
+                    else
                     {
-                        remain_size -= pObj_info_cur->code_size;
-                        PUSH_STRING(pStr_buf, 2, "%s (+RO)\n", pDef_obj_act->obj_name);
+                        printf("the default object '%s' is not exist !!\n", pDef_obj_act->obj_name);
                     }
-
                 }
+
+                //----------------------------------------------
+                // put objects which are not the default objects to this exec region
+                // ps. it also should check the other default objects in the other exec region
+
+
+                PUSH_STRING(pStr_buf, 1, "} ; remain %d\n\n", remain_size);
             }
 
-
-            PUSH_STRING(pStr_buf, 1, "%s", "}\n");
             PUSH_STRING(pStr_buf, 0, "%s", "}\n\n");
             FLUSH_STRING(fout, pStr_buf);
         }
+
+        // TODO: check unused objects in database
 
     }while(0);
 
     if( pStr_buf )  free(pStr_buf);
     if( fout )      fclose(fout);
-
     return rval;
 }
 //=============================================================================
@@ -657,7 +742,7 @@ int main(int arc, char **argv)
 
                 pObj_tmp = pObj_tmp->next;
 
-                fprintf(fout, "\t%d\t%d\t%d\t%d\t%d\t%d\t%s.o\n",
+                fprintf(fout, "\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
                        pcur->code_size, pcur->inc_data_size, pcur->ro_data_size, pcur->rw_data_size,
                        pcur->zi_data_size, pcur->debug_size, pcur->obj_name);
             }
@@ -695,13 +780,18 @@ int main(int arc, char **argv)
         }
     }
 
-    if( g_def_obj_mgr.pDef_obj )
+    for(i = 0; i < MAX_LOAD_REGION_NUM; i++)
     {
-        def_obj_t       *pObj_cur = g_def_obj_mgr.pDef_obj;
+        region_def_obj_t    *pRegion_obj_cur = &g_def_obj_mgr.load_region_obj[i];
+        def_obj_t           *pObj_cur = 0;
+
+        if( pRegion_obj_cur->def_obj_num == 0 )
+            continue;
+
+        pObj_cur = pRegion_obj_cur->pDef_obj;
         while( pObj_cur )
         {
             def_obj_t       *pObj_tmp = pObj_cur;
-
             pObj_cur = pObj_cur->next;
             free(pObj_tmp);
         }
